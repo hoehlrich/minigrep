@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fs;
 
 pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
-    // Saerch each file
+    // Search each file
     for file in &args.files {
         // Add file prefix if needed (when more than one file)
         let mut out = "".to_string();
@@ -24,12 +24,16 @@ pub fn run(args: Args) -> Result<(), Box<dyn Error>> {
 #[clap(author, version, about, trailing_var_arg = true)]
 pub struct Args {
     /// Pattern to search against
-    #[clap(required = true)]
+    #[clap(required=true)]
     pattern: String,
 
     /// Files to search
-    #[arg(required = true)]
+    #[arg(required=true)]
     files: Vec<String>,
+
+    /// Use <PATTERNS> as the patterns. If used multiple times, search all patterns given
+    #[arg(long="regexp", short='e', group="Matching Control")]
+    patterns: Vec<String>,
 
     /// Ignore case distinctions in patterns and input data
     #[arg(short, long, group="Matching Control")]
@@ -49,21 +53,36 @@ pub struct Args {
 }
 
 impl Args {
-    fn get_regex(&self) -> Result<Regex, regex::Error> {
-        // Handle case sensitivity
-        let pattern = match self.ignore_case {
-            true => self.pattern.to_lowercase(),
-            false => self.pattern.clone(),
+    fn get_regexes(&self) -> Result<Vec<Regex>, regex::Error> {
+        let patterns = match self.patterns.len(){
+            0 => vec![self.pattern.clone()],
+            _ => {
+                let mut a: Vec<String> = self.patterns.clone();
+                a.push(self.pattern.clone());
+                a
+            },
         };
 
-        // Handle matching control
-        if self.word_regexp {
-            Regex::new(&format!(r"\b({})\b", pattern))
-        } else if self.line_regexp {
-            Regex::new(&format!(r"^{}$", pattern))
-        } else {
-            Regex::new(&pattern)
+        let mut regexes = vec![];
+
+        for pattern in patterns {
+            // Handle case sensitivity
+            let pattern = match self.ignore_case {
+                true => pattern.to_lowercase(),
+                false => pattern.clone(),
+            };
+
+            // Handle matching control
+            if self.word_regexp {
+                regexes.push(Regex::new(&format!(r"\b({})\b", pattern))?);
+            } else if self.line_regexp {
+                regexes.push(Regex::new(&format!(r"^{}$", pattern))?);
+            } else {
+                regexes.push(Regex::new(&pattern)?);
+            }
         }
+
+        Ok(regexes)
     }
 }
 
@@ -71,7 +90,7 @@ fn search_file(args: &Args, file: String) -> Result<Vec<String>, Box<dyn Error>>
     let mut results = vec![];
 
     let contents = fs::read_to_string(file)?;
-    let pattern = args.get_regex()?;
+    let patterns = args.get_regexes()?;
 
     for line in contents.lines() {
         // Handle case sensitivity
@@ -82,8 +101,10 @@ fn search_file(args: &Args, file: String) -> Result<Vec<String>, Box<dyn Error>>
 
         // Check if match
         // Handle invert search
-        if pattern.is_match(&match_line) != args.invert_match {
-            results.push(line.to_string());
+        for pattern in patterns.iter() {
+            if pattern.is_match(&match_line) != args.invert_match {
+                results.push(line.to_string());
+            }
         }
     }
     Ok(results)
